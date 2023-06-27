@@ -1,8 +1,15 @@
-use crate::syntax::{
-    ExpressionSyntax::{BinaryExpressionSyntax, UnaryExpressionSyntax},
-    Keywords,
-    SyntaxKind::{self, Keyword, Token},
-    SyntaxKindDescriptor, Tokens,
+mod precedence;
+
+use core::panic;
+
+use crate::{
+    diagnostics::Diagnostics,
+    syntax::{
+        ExpressionSyntax::{BinaryExpressionSyntax, UnaryExpressionSyntax},
+        Keywords, LiteralToken,
+        SyntaxKind::{self, Keyword, Token},
+        SyntaxKindDescriptor, Tokens,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -13,15 +20,15 @@ pub struct ParserError {
 pub struct Parser {
     tokens: Vec<SyntaxKindDescriptor>,
     position: usize,
-    errors: Vec<ParserError>,
+    diagnostics: Diagnostics,
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<SyntaxKindDescriptor>) -> Parser {
+    pub fn new(tokens: Vec<SyntaxKindDescriptor>, input: String) -> Parser {
         Parser {
             tokens,
             position: 0,
-            errors: Vec::new(),
+            diagnostics: Diagnostics::new(input),
         }
     }
 
@@ -47,21 +54,26 @@ impl Parser {
         current
     }
 
-    fn match_token(&mut self, kind: SyntaxKind) -> SyntaxKindDescriptor {
+    fn match_token(&mut self, descriptor: SyntaxKindDescriptor) -> SyntaxKindDescriptor {
+        let kind = descriptor.syntax();
         if self.current().syntax().matches(&kind) {
             return self.next_token();
         }
-        self.errors.push(ParserError {
-            descriptor: self.current(),
-            message: format!("Expected {:?}, got {:?}", kind, self.current().syntax()),
-        });
+
+        self.diagnostics
+            .add_error(crate::diagnostics::ErrorKind::UnexpectedToken {
+                expected: descriptor,
+                found: self.current(),
+                position: self.current().position(),
+            });
+
         SyntaxKindDescriptor::new(self.position, kind)
     }
 
     fn parse_expression(&mut self, parent_precedence: Option<usize>) -> SyntaxKindDescriptor {
         let parent_precedence = parent_precedence.unwrap_or(0);
         let current = self.current().clone();
-        let unary_precedence = unary_operator_precedence(current.syntax());
+        let unary_precedence = precedence::unary_operator_precedence(current.syntax());
         let mut left = if unary_precedence != 0 && unary_precedence >= parent_precedence {
             let operator = self.next_token().syntax();
             let operand = self.parse_expression(None);
@@ -77,7 +89,7 @@ impl Parser {
         };
 
         loop {
-            let precedence = binary_operator_precedence(self.current().syntax());
+            let precedence = precedence::binary_operator_precedence(self.current().syntax());
             if precedence == 0 || precedence <= parent_precedence {
                 break;
             }
@@ -98,33 +110,111 @@ impl Parser {
     }
 
     fn parse_primary_expression(&mut self) -> SyntaxKindDescriptor {
-
         let current = self.current().clone();
         let result = match current.syntax() {
             Token(Tokens::OpenParenthesisToken) => {
                 let left = self.next_token();
                 let expression = self.parse_expression(None);
-                let right = self.match_token(Token(Tokens::CloseParenthesisToken));
+                let right = self.match_token(SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::CloseParenthesisToken),
+                ));
                 SyntaxKindDescriptor::new(
                     current.position(),
-                    SyntaxKind::Expression(crate::syntax::ExpressionSyntax::ParenthesizedExpressionSyntax {
-                        open_parenthesis_token: Box::new(left.syntax()),
-                        expression: Box::new(expression.syntax()),
-                        close_parenthesis_token: Box::new(right.syntax()),
-                    }),
+                    SyntaxKind::Expression(
+                        crate::syntax::ExpressionSyntax::ParenthesizedExpressionSyntax {
+                            open_parenthesis_token: Box::new(left.syntax()),
+                            expression: Box::new(expression.syntax()),
+                            close_parenthesis_token: Box::new(right.syntax()),
+                        },
+                    ),
                 )
-            },
-            Token(Tokens::AlphaNumericToken { value: _ }) => {
+            }
+            Token(Tokens::LiteralToken {
+                value: LiteralToken::Int { value: _ },
+            }) => {
+                let number = self.next_token();
+                SyntaxKindDescriptor::new(
+                    current.position(),
+                    SyntaxKind::Expression(
+                        crate::syntax::ExpressionSyntax::LiteralExpressionSyntax {
+                            expression: Box::new(number.syntax()),
+                        },
+                    ),
+                )
+            }
+            Token(Tokens::LiteralToken {
+                value: LiteralToken::Float { value: _ },
+            }) => {
+                let number = self.next_token();
+                SyntaxKindDescriptor::new(
+                    current.position(),
+                    SyntaxKind::Expression(
+                        crate::syntax::ExpressionSyntax::LiteralExpressionSyntax {
+                            expression: Box::new(number.syntax()),
+                        },
+                    ),
+                )
+            }
+
+            Token(Tokens::LiteralToken {
+                value: LiteralToken::String { value: _ },
+            }) => {
+                let string = self.next_token();
+                SyntaxKindDescriptor::new(
+                    current.position(),
+                    SyntaxKind::Expression(
+                        crate::syntax::ExpressionSyntax::LiteralExpressionSyntax {
+                            expression: Box::new(string.syntax()),
+                        },
+                    ),
+                )
+            }
+
+            Token(Tokens::LiteralToken {
+                value: LiteralToken::Bool { value: _ },
+            }) => {
+                let boolean = self.next_token();
+                SyntaxKindDescriptor::new(
+                    current.position(),
+                    SyntaxKind::Expression(
+                        crate::syntax::ExpressionSyntax::LiteralExpressionSyntax {
+                            expression: Box::new(boolean.syntax()),
+                        },
+                    ),
+                )
+            }
+
+            Token(Tokens::LiteralToken { value: _ }) => {
                 let left = self.next_token();
                 let operator = self.next_token();
                 let right = self.parse_expression(None);
-                
+
                 match operator.syntax() {
-                    Token(Tokens::PlusToken) | 
-                    Token(Tokens::MinusToken) |
-                    Token(Tokens::StarToken) |
-                    Token(Tokens::SlashToken) |
-                    Token(Tokens::PercentToken) => {
+                    Token(Tokens::PlusToken)
+                    | Token(Tokens::MinusToken)
+                    | Token(Tokens::StarToken)
+                    | Token(Tokens::SlashToken)
+                    | Token(Tokens::PercentToken) => SyntaxKindDescriptor::new(
+                        current.position(),
+                        SyntaxKind::Expression(BinaryExpressionSyntax {
+                            left: Box::new(left.syntax()),
+                            operator: Box::new(operator.syntax()),
+                            right: Box::new(right.syntax()),
+                        }),
+                    ),
+                    Token(Tokens::EqualsToken) => SyntaxKindDescriptor::new(
+                        current.position(),
+                        SyntaxKind::Statement(
+                            crate::syntax::StatementSyntax::VariableAssignmentStatementSyntax {
+                                identifier: Box::new(left.syntax()),
+                                equals_token: Box::new(operator.syntax()),
+                                expression: Box::new(right.syntax()),
+                            },
+                        ),
+                    ),
+                    Token(Tokens::AmpersandAmpersandToken) => {
+                        let right = self.parse_expression(None);
                         SyntaxKindDescriptor::new(
                             current.position(),
                             SyntaxKind::Expression(BinaryExpressionSyntax {
@@ -133,33 +223,47 @@ impl Parser {
                                 right: Box::new(right.syntax()),
                             }),
                         )
-                    },
+                    }
+
                     _ => {
-                        self.errors.push(ParserError {
-                            message: String::from(format!("Expected a binary operator, got {:?}", operator.syntax())),
-                            descriptor: operator,
-                        });
+                        self.diagnostics.add_error(
+                            crate::diagnostics::ErrorKind::UnexpectedToken {
+                                expected: SyntaxKindDescriptor::new(
+                                    self.position,
+                                    Token(Tokens::BinaryOperatorToken),
+                                ),
+                                position: operator.position(),
+                                found: operator,
+                            },
+                        );
                         SyntaxKindDescriptor::new(
                             current.position(),
-                            
-                            SyntaxKind::Token(Tokens::BadToken { value: String::from("Bad Token") })
+                            SyntaxKind::Token(Tokens::BadToken {
+                                value: "Bad Token".to_string(),
+                            }),
                         )
                     }
                 }
-            },
+            }
 
-            Token(Tokens::NumberToken { value: _ }) => {
-                let number = self.next_token();
+            Token(Tokens::IdentifierToken { value }) => {
+                let identifier = self.next_token();
                 SyntaxKindDescriptor::new(
                     current.position(),
-                    SyntaxKind::Expression(crate::syntax::ExpressionSyntax::LiteralExpressionSyntax {
-                        expression: Box::new(number.syntax()),
-                    }),
+                    SyntaxKind::Expression(
+                        crate::syntax::ExpressionSyntax::LiteralExpressionSyntax {
+                            expression: Box::new(identifier.syntax()),
+                        },
+                    ),
                 )
-            },
+            }
+
             Token(Tokens::OpenBraceToken) => {
                 let statements = self.parse_primary_expression();
-                let close_bracket = self.match_token(Token(Tokens::CloseBraceToken));
+                let close_bracket = self.match_token(SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::CloseBraceToken),
+                ));
 
                 SyntaxKindDescriptor::new(
                     current.position(),
@@ -172,16 +276,21 @@ impl Parser {
             }
 
             Keyword(Keywords::LetKeyword) => {
-                
                 let let_keyword = self.next_token();
                 let identifier = self.next_token();
                 let identifier_syntax = identifier.syntax();
 
                 match identifier_syntax {
-                    SyntaxKind::Token(Tokens::AlphaNumericToken { value: _ }) => {
-                        let equals_token = self.match_token(Token(Tokens::EqualsToken));
+                    SyntaxKind::Token(Tokens::IdentifierToken { value: _ }) => {
+                        let equals_token = self.match_token(SyntaxKindDescriptor::new(
+                            self.position,
+                            Token(Tokens::EqualsToken),
+                        ));
                         let expression = self.parse_expression(None);
-                        let semicolon_token = self.match_token(Token(Tokens::SemiColonToken));
+                        let semicolon_token = self.match_token(SyntaxKindDescriptor::new(
+                            self.position,
+                            Token(Tokens::SemiColonToken),
+                        ));
                         SyntaxKindDescriptor::new(
                             current.position(),
                             SyntaxKind::Statement(crate::syntax::StatementSyntax::VariableDeclarationStatementSyntax {
@@ -192,28 +301,52 @@ impl Parser {
                                 semicolon: Box::new(semicolon_token.syntax()),
                             }),
                         )
-                    },
-                     _ => {
-                        self.errors.push(ParserError {
-                            message: String::from(format!("Expected an identifier, got {:?}", identifier.syntax())),
-                            descriptor: identifier,
-                        });
+                    }
+                    _ => {
+                        self.diagnostics.add_error(
+                            crate::diagnostics::ErrorKind::UnexpectedToken {
+                                expected: SyntaxKindDescriptor::new(
+                                    identifier.position(),
+                                    Token(Tokens::LiteralToken {
+                                        value: crate::syntax::LiteralToken::String {
+                                            value: "id".to_string(),
+                                        },
+                                    }),
+                                ),
+                                position: identifier.position(),
+                                found: identifier,
+                            },
+                        );
+
                         SyntaxKindDescriptor::new(
                             current.position(),
-                            SyntaxKind::Token(Tokens::BadToken { value: String::from("Bad Token") })
+                            SyntaxKind::Token(Tokens::BadToken {
+                                value: "Bad Token".to_string(),
+                            }),
                         )
-                     }
-                    
+                    }
                 }
-            },
+            }
             Keyword(Keywords::IfKeyword) => {
                 let if_keyword = self.next_token();
-                let open_parenthesis = self.match_token(Token(Tokens::OpenParenthesisToken));
+                let open_parenthesis = self.match_token(SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::OpenParenthesisToken),
+                ));
                 let condition = self.parse_expression(None);
-                let close_parenthesis = self.match_token(Token(Tokens::CloseParenthesisToken));
-                let open_braces = self.match_token(Token(Tokens::OpenBraceToken));
+                let close_parenthesis = self.match_token(SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::CloseParenthesisToken),
+                ));
+                let open_braces = self.match_token(SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::OpenBraceToken),
+                ));
                 let body = self.parse_expression(None);
-                let close_braces = self.match_token(Token(Tokens::CloseBraceToken));
+                let close_braces = self.match_token(SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::CloseBraceToken),
+                ));
                 SyntaxKindDescriptor::new(
                     current.position(),
                     SyntaxKind::Statement(crate::syntax::StatementSyntax::IfStatementSyntax {
@@ -227,49 +360,45 @@ impl Parser {
                     }),
                 )
             }
-            
-            
+
             _ => {
-                self.errors.push(ParserError { 
-                    descriptor: self.current(), 
-                    message: format!("Unexpected token {:?}", self.current().syntax()) 
-                });
+                let descriptor = self.current();
+                let position = descriptor.position();
+                self.diagnostics
+                    .add_error(crate::diagnostics::ErrorKind::UnexpectedToken {
+                        expected: SyntaxKindDescriptor::new(
+                            self.position,
+                            Token(Tokens::LiteralToken {
+                                value: crate::syntax::LiteralToken::String {
+                                    value: "identifier".to_string(),
+                                },
+                            }),
+                        ),
+                        position,
+                        found: descriptor,
+                    });
+
                 SyntaxKindDescriptor::new(
-                    current.position(),
-                    SyntaxKind::Token(Tokens::BadToken { value: String::from("Bad Token") })
+                    position,
+                    SyntaxKind::Token(Tokens::BadToken {
+                        value: "Bad Token".to_string(),
+                    }),
                 )
             }
         };
         result
-    } 
+    }
 
     pub fn parse(&mut self) -> SyntaxKindDescriptor {
-        
         let expression = self.parse_expression(None);
-        self.match_token(Token(Tokens::EndOfFileToken));
+        self.match_token(SyntaxKindDescriptor::new(
+            self.position,
+            Token(Tokens::EndOfFileToken),
+        ));
         expression
     }
 
-    pub fn errors(&self) -> Vec<ParserError> {
-        self.errors.clone()
-    }
-}
-
-fn binary_operator_precedence(kind: SyntaxKind) -> usize {
-    match kind {
-        Token(Tokens::PlusToken) => 1,
-        Token(Tokens::MinusToken) => 1,
-        Token(Tokens::StarToken) => 2,
-        Token(Tokens::SlashToken) => 2,
-        Token(Tokens::PercentToken) => 3,
-        _ => 0,
-    }
-}
-
-fn unary_operator_precedence(kind: SyntaxKind) -> usize {
-    match kind {
-        Token(Tokens::PlusToken) => 3,
-        Token(Tokens::MinusToken) => 3,
-        _ => 0,
+    pub fn diagnostics(&self) -> Diagnostics {
+        self.diagnostics.clone()
     }
 }

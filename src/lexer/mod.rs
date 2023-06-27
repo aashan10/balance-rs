@@ -1,6 +1,12 @@
 #![allow(dead_code)]
-use crate::syntax::{Tokens, Keywords, SyntaxKind::{Token, Keyword}, SyntaxKindDescriptor};
-
+use crate::{
+    diagnostics::{self, Diagnostics},
+    syntax::{
+        Keywords, LiteralToken,
+        SyntaxKind::{Keyword, Token},
+        SyntaxKindDescriptor, Tokens,
+    },
+};
 
 #[derive(Debug, Clone)]
 pub struct LexerError {
@@ -10,15 +16,16 @@ pub struct LexerError {
 pub struct Lexer {
     input: String,
     position: usize,
-    errors: Vec<LexerError>,
+    diagnostics: Diagnostics,
 }
 
 impl Lexer {
     pub fn new(input: String) -> Self {
+        let diagnostics = diagnostics::Diagnostics::new(input.clone());
         Self {
             input,
             position: 0,
-            errors: Vec::new(),
+            diagnostics,
         }
     }
 
@@ -34,126 +41,267 @@ impl Lexer {
         self.peek(0)
     }
 
+    fn lookahead(&self) -> char {
+        self.peek(1)
+    }
+
     fn next(&mut self) {
         self.position += 1;
     }
 
     fn next_token(&mut self) -> SyntaxKindDescriptor {
-
-        if self.current().is_numeric() {
-            let mut value = String::new();
-            while self.current().is_numeric() {
-                value.push(self.current());
-                self.next();
-            }
-            return SyntaxKindDescriptor::new(self.position, Token(Tokens::NumberToken { value: value.parse::<f64>().unwrap() }));
-        }
+        let start = self.position;
 
         match self.current() {
-            '\0' => SyntaxKindDescriptor::new(self.position, Token(Tokens::EndOfFileToken)),
+            '\0' => SyntaxKindDescriptor::new(start, Token(Tokens::EndOfFileToken)),
             ' ' | '\n' | '\t' => {
                 while self.current() == ' ' || self.current() == '\n' || self.current() == '\t' {
                     self.next();
                 }
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::WhiteSpaceToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::WhiteSpaceToken));
+            }
+            '#' => {
+                let mut comment = String::from("");
+                while self.current() != '\n' && self.current() != '\0' {
+                    comment.push(self.current());
+                    self.next();
+                }
+                return SyntaxKindDescriptor::new(
+                    start,
+                    Token(Tokens::CommentToken { value: comment }),
+                );
             }
             '+' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::PlusToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::PlusToken));
             }
             '-' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::MinusToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::MinusToken));
             }
             '*' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::StarToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::StarToken));
             }
             '/' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::SlashToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::SlashToken));
             }
             '%' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::PercentToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::PercentToken));
             }
             '=' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::EqualsToken));
+                if self.lookahead() == '=' {
+                    self.next();
+                    return SyntaxKindDescriptor::new(start, Token(Tokens::EqualsEqualsToken));
+                }
+                return SyntaxKindDescriptor::new(start, Token(Tokens::EqualsToken));
             }
             '(' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::OpenParenthesisToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::OpenParenthesisToken));
             }
             ')' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::CloseParenthesisToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::CloseParenthesisToken));
             }
             ';' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::SemiColonToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::SemiColonToken));
             }
             ':' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::ColonToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::ColonToken));
             }
             '{' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::OpenBraceToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::OpenBraceToken));
             }
             '}' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::CloseBraceToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::CloseBraceToken));
             }
             '[' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::OpenBracketToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::OpenBracketToken));
             }
             ']' => {
                 self.next();
-                return SyntaxKindDescriptor::new(self.position, Token(Tokens::CloseBracketToken));
+                return SyntaxKindDescriptor::new(start, Token(Tokens::CloseBracketToken));
             }
-            _ => {
+            '&' => {
+                
+                if self.lookahead() == '&' {
+                    self.position += 2;
+                    return SyntaxKindDescriptor::new(
+                        start,
+                        Token(Tokens::AmpersandAmpersandToken),
+                    );
+                }
+                self.next();
+                return SyntaxKindDescriptor::new(start, Token(Tokens::AmpersandToken));
+            }
+            '|' => {
+                self.next();
+                if self.lookahead() == '|' {
+                    self.next();
+                    return SyntaxKindDescriptor::new(start, Token(Tokens::PipePipeToken));
+                }
+                return SyntaxKindDescriptor::new(start, Token(Tokens::PipeToken));
+            }
+
+            '\'' => {
+                self.next();
+                let character = self.current();
+                self.next();
+                let closing = self.current();
+
+                if closing != '\'' {
+                    self.diagnostics
+                        .add_error(diagnostics::ErrorKind::ExpectedToken {
+                            expected: SyntaxKindDescriptor::new(
+                                start,
+                                Token(Tokens::SingleQuoteToken),
+                            ),
+
+                            found: SyntaxKindDescriptor::new(
+                                self.position,
+                                Token(Tokens::LiteralToken {
+                                    value: LiteralToken::Char { value: character },
+                                }),
+                            ),
+                            position: self.position,
+                        });
+                }
+
+                return SyntaxKindDescriptor::new(
+                    self.position,
+                    Token(Tokens::LiteralToken {
+                        value: LiteralToken::Char { value: character },
+                    }),
+                );
+            }
+            '"' => {
+                self.next();
+                let position = start;
                 let mut value = String::new();
-                let position = self.position;
-                while self.current() != '\0' && self.current() != ' ' && self.current() != '\t' {
+                while self.current() != '"' {
+                    value.push(self.current());
+                    self.next();
+                }
+                self.next();
+                return SyntaxKindDescriptor::new(
+                    position,
+                    Token(Tokens::LiteralToken {
+                        value: LiteralToken::String { value },
+                    }),
+                );
+            }
+            '0'..='9' => {
+                let mut value = String::new();
+                let mut is_float = false;
+                while self.current().is_numeric()
+                    || self.current() == '.'
+                    || self.current() == 'e'
+                    || self.current() == '-'
+                    || self.current() == '+'
+                {
+                    if self.current() == '.' {
+                        is_float = true;
+                    }
                     value.push(self.current());
                     self.next();
                 }
 
-                for character in value.chars() {
-                    if !character.is_alphanumeric() && character != '_' {
-                        let token_descriptor = SyntaxKindDescriptor::new(position, Token(Tokens::BadToken { value }));
-                        let error = LexerError {
-                            descriptor: token_descriptor.clone(),
-                            message: format!("Invalid character: {}", character),
-                        };
-                        self.errors.push(error);
-                        return token_descriptor;
-                    }
+                if is_float {
+                    return SyntaxKindDescriptor::new(
+                        start,
+                        Token(Tokens::LiteralToken {
+                            value: LiteralToken::Float {
+                                value: value.parse::<f64>().unwrap(),
+                            },
+                        }),
+                    );
+                } else {
+                    return SyntaxKindDescriptor::new(
+                        start,
+                        Token(Tokens::LiteralToken {
+                            value: LiteralToken::Int {
+                                value: value.parse::<i64>().unwrap(),
+                            },
+                        }),
+                    );
+                }
+            }
+            'a'..='z' | 'A'..='Z' | '_' => {
+                let mut value = String::new();
+                let position = start;
+                while self.current().is_alphanumeric() || self.current() == '_' {
+                    value.push(self.current());
+                    self.next();
                 }
 
-                match value.as_str() {
-                    "let" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::LetKeyword)),
-                    "if" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::IfKeyword)),
-                    "else" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::ElseKeyword)),
-                    "for" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::ForKeyword)),
-                    "loop" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::LoopKeyword)),
-                    "break" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::BreakKeyword)),
-                    "continue" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::ContinueKeyword)),
-                    "match" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::MatchKeyword)),
-                    _ => {
-                        return SyntaxKindDescriptor::new(position, Token(Tokens::AlphaNumericToken { value }));
-                    }
-                }
+                self.match_keywords_and_string_literals(value.as_str(), position)
+            }
+            _ => {
+                let token = Tokens::UnknownToken {
+                    value: self.current().to_string(),
+                };
+                self.diagnostics
+                    .add_error(diagnostics::ErrorKind::UnknownToken {
+                        token: SyntaxKindDescriptor::new(self.position, Token(token.clone())),
+                        position: self.position,
+                    });
+                return SyntaxKindDescriptor::new(self.position, Token(token));
             }
         }
     }
 
-    pub fn errors(&self) -> Vec<LexerError> {
-        self.errors.clone()
+    fn match_keywords_and_string_literals(
+        &self,
+        token: &str,
+        position: usize,
+    ) -> SyntaxKindDescriptor {
+        match token {
+            "let" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::LetKeyword)),
+            "if" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::IfKeyword)),
+            "else" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::ElseKeyword)),
+            "for" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::ForKeyword)),
+            "loop" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::LoopKeyword)),
+            "break" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::BreakKeyword)),
+            "continue" => {
+                return SyntaxKindDescriptor::new(position, Keyword(Keywords::ContinueKeyword))
+            }
+            "match" => return SyntaxKindDescriptor::new(position, Keyword(Keywords::MatchKeyword)),
+            "true" =>  SyntaxKindDescriptor::new(
+                self.position,
+                Token(Tokens::LiteralToken {
+                    value: LiteralToken::Bool { value: true},
+                })
+            ),
+            "false" =>  SyntaxKindDescriptor::new(
+                self.position,
+                Token(Tokens::LiteralToken {
+                    value: LiteralToken::Bool { value: false},
+                })
+            ),
+            _ => {
+                return SyntaxKindDescriptor::new(
+                    position,
+                    Token(Tokens::IdentifierToken {
+                        value: token.to_string(),
+                    }),
+                );
+            }
+        }
     }
-    
+
+    pub fn diagnostics(&self) -> Diagnostics {
+        self.diagnostics.clone()
+    }
+
     pub fn lex(&mut self) -> Vec<SyntaxKindDescriptor> {
         let mut tokens: Vec<SyntaxKindDescriptor> = vec![];
         loop {
@@ -172,10 +320,7 @@ impl Lexer {
                     tokens.push(token);
                 }
             };
-        }  
+        }
         tokens
     }
-
-
-    
 }

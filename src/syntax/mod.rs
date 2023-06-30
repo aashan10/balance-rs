@@ -62,6 +62,7 @@ pub enum Tokens {
     BinaryOperatorToken,
     UnaryOperatorToken,
     UnknownToken {value: String},
+    BangEqualsToken,
     
 }
 
@@ -291,6 +292,15 @@ impl SyntaxKindDescriptor {
                 self.print_syntax_kind(*open_brace, Some(format!("{}\t", prefix)));
                 self.print_syntax_kind(*body, Some(format!("{}\t", prefix)));
                 self.print_syntax_kind(*close_brace, Some(format!("{}\t", prefix)));
+            }
+
+            SyntaxKind::Statement(StatementSyntax::VariableDeclarationStatementSyntax { keyword, identifier, equals_token, expression, semicolon }) => {
+                println!("{}VariableDeclarationStatementSyntax", prefix);
+                self.print_syntax_kind(*keyword, Some(format!("{}\t", prefix)));
+                self.print_syntax_kind(*identifier, Some(format!("{}\t", prefix)));
+                self.print_syntax_kind(*equals_token, Some(format!("{}\t", prefix)));
+                self.print_syntax_kind(*expression, Some(format!("{}\t", prefix)));
+                self.print_syntax_kind(*semicolon, Some(format!("{}\t", prefix)));
             }
 
             _ => {

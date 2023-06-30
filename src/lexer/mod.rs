@@ -1,4 +1,7 @@
 #![allow(dead_code)]
+
+pub mod source_text;
+
 use crate::{
     diagnostics::{self, Diagnostics},
     syntax::{
@@ -14,14 +17,14 @@ pub struct LexerError {
     pub message: String,
 }
 pub struct Lexer {
-    input: String,
+    input: source_text::SourceText,
     position: usize,
     diagnostics: Diagnostics,
 }
 
 impl Lexer {
-    pub fn new(input: String) -> Self {
-        let diagnostics = diagnostics::Diagnostics::new(input.clone());
+    pub fn new(input: source_text::SourceText) -> Self {
+        let diagnostics = diagnostics::Diagnostics::new(input.to_string());
         Self {
             input,
             position: 0,
@@ -31,10 +34,10 @@ impl Lexer {
 
     fn peek(&self, offset: usize) -> char {
         let position = self.position + offset;
-        if position >= self.input.len() {
+        if position >= self.input.text.len() {
             return '\0';
         }
-        self.input.chars().nth(position).unwrap()
+        self.input.text.chars().nth(position).unwrap()
     }
 
     fn current(&self) -> char {
@@ -90,6 +93,14 @@ impl Lexer {
             '%' => {
                 self.next();
                 return SyntaxKindDescriptor::new(start, Token(Tokens::PercentToken));
+            }
+            '!' => {
+                self.next();
+                if self.lookahead() == '=' {
+                    self.next();
+                    return SyntaxKindDescriptor::new(start, Token(Tokens::BangEqualsToken));
+                }
+                return SyntaxKindDescriptor::new(start, Token(Tokens::BangToken));
             }
             '=' => {
                 self.next();

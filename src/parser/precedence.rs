@@ -17,12 +17,14 @@ pub fn binary_operator_precedence(kind: SyntaxKind) -> usize {
         Token(Tokens::SlashToken) => 3,
 
         Token(Tokens::PercentToken) => 4,
+        Token(Tokens::BangEqualsToken) => 4,
         _ => 0,
     }
 }
 
 pub fn unary_operator_precedence(kind: SyntaxKind) -> usize {
     match kind {
+        Token(Tokens::BangToken) => 6,
         Token(Tokens::PlusToken) => 5,
         Token(Tokens::MinusToken) => 5,
         _ => 0,

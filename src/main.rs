@@ -41,7 +41,8 @@ fn main() {
             continue;
         }
 
-        let mut lexer = lexer::Lexer::new(input.to_string());
+        let source_text = lexer::source_text::SourceText::new(input.to_string());
+        let mut lexer = lexer::Lexer::new(source_text);
         let tokens = lexer.lex();
 
         if show_tree {

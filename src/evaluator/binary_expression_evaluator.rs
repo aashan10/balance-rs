@@ -135,6 +135,14 @@ pub fn evaluate(
                 panic!("Cannot modulo {:?} and {:?}", left_clone, right_clone);
             }
         },
+        SyntaxKind::Token(crate::syntax::Tokens::BangEqualsToken) => match (left, right) {
+            (EvaluationResult::Boolean(a), EvaluationResult::Boolean(b)) => {
+                EvaluationResult::Boolean(a != b)
+            },
+            _ => {
+                panic!("Cannot compare {:?} and {:?}", left_clone, right_clone);
+            }
+        }
         SyntaxKind::Token(crate::syntax::Tokens::AmpersandAmpersandToken) => match (left, right) {
             (EvaluationResult::Boolean(left), EvaluationResult::Boolean(right)) => {
                 EvaluationResult::Boolean(left && right)
